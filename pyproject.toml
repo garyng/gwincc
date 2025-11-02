@@ -1,0 +1,7 @@
+[project]
+name = "gwincc"
+version = "0.1.0"
+description = "Windows control center"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
