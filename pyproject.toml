@@ -4,7 +4,11 @@ version = "0.1.0"
 description = "Windows control center"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "imgui-bundle>=1.92.4",
+    "pywinauto>=0.6.9",
+    "rapidfuzz>=3.14.3",
+]
 
 [project.scripts]
 gwincc = "gwincc:main"
@@ -17,3 +21,7 @@ build-backend = "uv_build"
 dev = [
     "jupyter>=1.1.1",
 ]
+
+[tool.uv.sources]
+# get the latest version as of now
+pywinauto = { git = "https://github.com/pywinauto/pywinauto", rev = "c23e64d5ea2c7d251f263973d320294f2fba5ef0" }
