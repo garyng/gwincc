@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import threading
 import time
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 from imgui_bundle import ImVec2, glfw_utils, hello_imgui, imgui, immapp, imgui_ctx
 import glfw  # must import after imgui_bundle
 
@@ -76,7 +76,7 @@ class Rect:
 
     def height(self) -> int:
         return self.bottom - self.top
-    
+
     def wh_ratio(self) -> float:
         return self.width() / self.height()
 
@@ -141,9 +141,7 @@ class Window:
         leaving even gaps from the top and left.
         """
 
-        if win32gui.IsIconic(self.hwnd):
-            # restore if minimized
-            win32gui.ShowWindow(self.hwnd, win32con.SW_RESTORE)
+        self.restore()
 
         left_gap = (monitor_rect.width() - width) / 2
         top_gap = (monitor_rect.height() - height) / 2
@@ -165,6 +163,17 @@ class Window:
         )
 
         print(rect.wh_ratio(), width_delta, height_delta)
+
+    def bring_to_front(self):
+        self.restore()
+        win32gui.BringWindowToTop(self.hwnd)
+
+    def restore(self):
+        # not minimized
+        if not win32gui.IsIconic(self.hwnd):
+            return
+        
+        win32gui.ShowWindow(self.hwnd, win32con.SW_RESTORE)
 
 
 @dataclass
@@ -195,6 +204,9 @@ class WindowStateStore:
         self.store = {
             window: state for window, state in self.store.items() if window in windows
         }
+
+    def selected(self) -> dict[Window, WindowState]:
+        return {w: ws for w, ws in self.store.items() if ws.selected}
 
 
 class GetWindowsBackgroundService2(BackgroundService):
@@ -268,7 +280,6 @@ def set_item_tooltip_no_delay(fmt: str):
 
 store = WindowStateStore()
 
-
 def main() -> None:
     # remove the default window icon
     # ref: https://github.com/pthom/imgui_bundle/issues/401
@@ -296,49 +307,176 @@ def main() -> None:
     # todo: rapidfuzz
 
     # todo: maybe change to use table
-    with imgui_ctx.begin_child("windows", size=ImVec2(0, -imgui.get_frame_height())):
-        for window in get_windows_background_service.windows:
-            state = store[window]
-            with imgui_ctx.push_id(str(window.hwnd)):
-                with (
-                    imgui_ctx.begin_horizontal("actions"),
-                    imgui_ctx.push_style_var(
-                        imgui.StyleVar_.item_spacing,
-                        ImVec2(style.item_spacing.y * 0.9, style.item_spacing.y),
-                    ),
-                    imgui_ctx.push_style_var(
-                        imgui.StyleVar_.frame_padding,
-                        ImVec2(style.frame_padding.y * 2, style.frame_padding.y * 2),
-                    ),
-                ):
-                    if state.pinned_at:
-                        if imgui.button("\ue68f"):
-                            state.unpin()
-                        set_item_tooltip_no_delay("unpin")
-                    else:
-                        if imgui.button("\uf08d"):
-                            state.pin()
-                        set_item_tooltip_no_delay("pin")
+    # with imgui_ctx.begin_child(
+    #     "windows", size=ImVec2(0, -10 * imgui.get_frame_height())
+    # ):
+    #     msio = imgui.begin_multi_select(
+    #         flags=imgui.MultiSelectFlags_.clear_on_escape
+    #         + imgui.MultiSelectFlags_.box_select2d,
+    #     )
 
-                    if imgui.button("\ue4bd"):
-                        window.center()
-                    set_item_tooltip_no_delay("center")
+    #     for window in get_windows_background_service.windows:
+    #         state = store[window]
+    #         with imgui_ctx.push_id(str(window.hwnd)):
+    #             with (
+    #                 imgui_ctx.begin_horizontal("actions"),
+    #                 imgui_ctx.push_style_var(
+    #                     imgui.StyleVar_.item_spacing,
+    #                     ImVec2(style.item_spacing.y * 0.9, style.item_spacing.y),
+    #                 ),
+    #                 imgui_ctx.push_style_var(
+    #                     imgui.StyleVar_.frame_padding,
+    #                     ImVec2(style.frame_padding.y * 2, style.frame_padding.y * 2),
+    #                 ),
+    #             ):
+    #                 if state.pinned_at:
+    #                     if imgui.button("\ue68f"):
+    #                         state.unpin()
+    #                     set_item_tooltip_no_delay("unpin")
+    #                 else:
+    #                     if imgui.button("\uf08d"):
+    #                         state.pin()
+    #                     set_item_tooltip_no_delay("pin")
 
-                    if imgui.button("\uf0fe"):
-                        window.resize(width_delta=10)
-                    set_item_tooltip_no_delay("bigger")
+    #                 if imgui.button("\ue4bd"):
+    #                     window.center()
+    #                 set_item_tooltip_no_delay("center")
 
-                    if imgui.button("\uf146"):
-                        window.resize(width_delta=-10)
-                    set_item_tooltip_no_delay("smaller")
+    #                 if imgui.button("\uf0fe"):
+    #                     window.resize(width_delta=10)
+    #                 set_item_tooltip_no_delay("bigger")
 
-                    imgui.selectable(
-                        f"{window.title}, hwnd={window.hwnd}, exe={window.proc.exe()}",
-                        False,
-                    )
+    #                 if imgui.button("\uf146"):
+    #                     window.resize(width_delta=-10)
+    #                 set_item_tooltip_no_delay("smaller")
+
+    #                 imgui.set_next_item_selection_user_data(window.hwnd)
+    #                 imgui.selectable(
+    #                     f"{window.title}, hwnd={window.hwnd}, exe={window.proc.exe()}",
+    #                     False,
+    #                 )
+
+    #     msio = imgui.end_multi_select()
+
+    #     for request in msio.requests:
+    #         if request.type == imgui.SelectionRequestType.set_all:
+    #             pass
+    #         elif request.type == imgui.SelectionRequestType.set_range:
+    #             pass
+
     # changed, value = imgui.slider_float("zome", imgui.get_style().font_scale_dpi, 0.9, 2)
     # if changed:
     #     imgui.get_style().scale_all_sizes()
+
+    with imgui_ctx.begin_table(
+        "windows2",
+        3,
+        # imgui.TableFlags_.sizing_stretch_prop
+        imgui.TableFlags_.resizable
+        + imgui.TableFlags_.scroll_x
+        + imgui.TableFlags_.scroll_y,
+        ImVec2(0, -5 * imgui.get_frame_height_with_spacing()),
+    ):
+        imgui.table_setup_scroll_freeze(0, 1)
+        imgui.table_setup_column("##actions")
+        imgui.table_setup_column("Title")
+        imgui.table_setup_column("Process")
+        imgui.table_headers_row()
+
+        windows = get_windows_background_service.windows
+
+        def on_selection(idx: int, selected: bool):
+            store[windows[idx]].selected = selected
+
+        msio = imgui.begin_multi_select(
+            imgui.MultiSelectFlags_.clear_on_escape
+            + imgui.MultiSelectFlags_.box_select2d,
+            items_count=len(windows),  # used in set_all request
+        )
+        apply_selection_requests(msio=msio, on_selection=on_selection)
+
+        for idx, window in enumerate(windows):
+            state = store[window]
+            with imgui_ctx.push_id(str(window.hwnd)):
+                imgui.table_next_row()
+
+                imgui.table_next_column()
+                if state.pinned_at:
+                    if imgui.button("\ue68f", ImVec2(24, 0)):
+                        state.unpin()
+                    set_item_tooltip_no_delay("unpin")
+                else:
+                    if imgui.button("\uf08d", ImVec2(24, 0)):
+                        state.pin()
+                    set_item_tooltip_no_delay("pin")
+
+                imgui.table_next_column()
+
+                imgui.set_next_item_selection_user_data(idx)
+                clicked, selected = imgui.selectable(
+                    label=window.title,
+                    p_selected=state.selected,
+                    flags=imgui.SelectableFlags_.span_all_columns,
+                )
+                if clicked:
+                    window.bring_to_front()
+
+                imgui.table_next_column()
+                imgui.text(window.proc.name())
+
+        msio = imgui.end_multi_select()
+        apply_selection_requests(msio=msio, on_selection=on_selection)
+
+    selected = store.selected()
+    imgui.separator_text("controls")
+
+    with (
+        imgui_ctx.begin_group(),
+        imgui_ctx.begin_horizontal("actions"),
+        imgui_ctx.push_style_var(
+            imgui.StyleVar_.item_spacing,
+            ImVec2(style.item_spacing.y * 0.9, style.item_spacing.y),
+        ),
+        imgui_ctx.push_style_var(
+            imgui.StyleVar_.frame_padding,
+            ImVec2(style.frame_padding.y * 10, style.frame_padding.y * 2),
+        ),
+    ):
+        imgui.button("\uf0d8")
+        set_item_tooltip_no_delay("always on top")
+
+        if imgui.button("\ue4bd"):
+            [window.center() for window in selected.keys()]
+        set_item_tooltip_no_delay("center")
+        
+        if imgui.button("\uf0fe"):
+            [window.resize(width_delta=10) for window in selected.keys()]
+        set_item_tooltip_no_delay("bigger")
+
+        if imgui.button("\uf146"):
+            [window.resize(width_delta=-10) for window in selected.keys()]
+        set_item_tooltip_no_delay("smaller")
+
+    # imgui.set_next_window_size(ImVec2(200, 400), imgui.Cond_.first_use_ever)
+    # imgui.set_next_window_pos(ImVec2(-1000, 100), imgui.Cond_.first_use_ever)
+    # with imgui_ctx.begin("controls"):
+    #     imgui.text("asdasd")
+
+
+
+
+def apply_selection_requests(
+    msio: imgui.MultiSelectIO, on_selection: Callable[[int, bool], None]
+):
+    for r in msio.requests:
+        if r.type == imgui.SelectionRequestType.set_range:
+            for idx in range(
+                r.range_first_item, r.range_last_item + 1, r.range_direction
+            ):
+                on_selection(idx, r.selected)
+        if r.type == imgui.SelectionRequestType.set_all:
+            for idx in range(0, msio.items_count):
+                on_selection(idx, r.selected)
 
 
 root_dir = Path(__file__).parent
@@ -352,9 +490,18 @@ if __name__ == "__main__":
     # hello_imgui.get_runner_params().callbacks.default_icon_font = hello_imgui.DefaultIconFont.font_awesome6
 
     runner_params = hello_imgui.RunnerParams()
+
+    # runner_params.imgui_window_params.default_imgui_window_type = (
+    #     hello_imgui.DefaultImGuiWindowType.provide_full_screen_dock_space
+    # )
+    runner_params.imgui_window_params.enable_viewports = True
+
     runner_params.callbacks.show_gui = main
     runner_params.app_window_params.window_title = "gwincc"
     runner_params.callbacks.load_additional_fonts = load_fonts
+
+    runner_params.app_window_params.restore_previous_geometry = True
+
 
     immapp.run(runner_params=runner_params)
     get_windows_background_service.close()
