@@ -1,4 +1,3 @@
-import os
 import threading
 from abc import abstractmethod
 
@@ -47,16 +46,16 @@ class GetWindowsBackgroundService(BackgroundService):
             # not empty
             if not title:
                 return
+            
+            # top level window only without parent
+            if win32gui.GetParent(hwnd):
+                return
 
             # skip if has an owner (eg: tool windows)
             if win32gui.GetWindow(hwnd, win32con.GW_OWNER):
                 return
 
             _, pid = win32process.GetWindowThreadProcessId(hwnd)
-
-            # not self
-            if pid == os.getpid():
-                return
 
             # process creation time
             proc = psutil.Process(pid=pid)

@@ -1,5 +1,7 @@
+from functools import partial
+import os
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Generic, TypeVar
 
 import rapidfuzz
 from imgui_bundle import ImVec2, hello_imgui, imgui, imgui_ctx, immapp
@@ -9,7 +11,24 @@ from gwincc.models import Window
 from gwincc.services import GetWindowsBackgroundService
 from gwincc.state import WindowStateStore
 
+import keyboard
+
 # todo: purge state
+
+
+def bring_self_to_front(get_windows_background_service: GetWindowsBackgroundService):
+    self = next(
+        (x for x in get_windows_background_service.windows if x.pid == os.getpid()),
+        None,
+    )
+    if not self:
+        return
+    
+    try:
+        self.bring_to_front()
+        self.center()
+    except:
+        pass
 
 
 def startup():
@@ -28,6 +47,14 @@ def startup():
     get_windows_background_service = GetWindowsBackgroundService()
     get_windows_background_service.run()
 
+    keyboard.add_hotkey(
+        "ctrl+shift+f1",
+        partial(
+            bring_self_to_front,
+            get_windows_background_service=get_windows_background_service,
+        ),
+    )
+
     hello_imgui.set_assets_folder(assets_dir.as_posix())
 
     runner_params = hello_imgui.RunnerParams()
@@ -45,7 +72,9 @@ def startup():
     main_view = MainView(get_windows_background_service=get_windows_background_service)
     runner_params.callbacks.show_gui = main_view.render
     immapp.run(runner_params=runner_params)
+
     get_windows_background_service.close()
+    keyboard.unhook_all()
 
 
 T = TypeVar("T")
@@ -88,6 +117,9 @@ class MainView:
         return 0.75 * title + 0.15 * process
 
     def _filter(self, windows: list[Window]):
+        # always filter out self
+        windows = [window for window in windows if window.pid != os.getpid()]
+
         if not self.search_str:
             return windows
 

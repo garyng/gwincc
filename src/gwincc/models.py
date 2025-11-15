@@ -34,6 +34,32 @@ class Rect:
         l, t, r, b = rect
         return cls(l, t, r, b)
 
+    @classmethod
+    def from_width_height(cls, width: int, height: int, top=0, left=0) -> "Rect":
+        right = left + width
+        bottom = top + height
+
+        return cls(left, top, right, bottom)
+
+    def center_inside(self, outside_rect: "Rect") -> "Rect":
+        """
+        Calculate the new rect where the current rect is centered inside the provided rect.
+        """
+
+        width = self.width()
+        height = self.height()
+
+        left_gap = (outside_rect.width() - width) / 2
+        top_gap = (outside_rect.height() - height) / 2
+
+        left = int(outside_rect.left + left_gap)
+        top = int(outside_rect.top + top_gap)
+
+        right = left + width
+        bottom = top + height
+
+        return Rect(left=left, top=top, right=right, bottom=bottom)
+
 
 @dataclass
 class Monitor:
@@ -66,15 +92,39 @@ class Window:
 
         return self.hwnd == value.hwnd
 
-    def center(self, ratio: float = 0.8):
-        monitor = Monitor.from_hwnd(self.hwnd)
+    def resize_and_center(self, ratio: float = 0.8):
+        work = self.monitor().work
 
-        width = int(monitor.work.width() * ratio)
-        height = int(monitor.work.height() * ratio)
+        width = int(work.width() * ratio)
+        height = int(work.height() * ratio)
 
         self._resize_move_to_center_of_rect(
-            width=width, height=height, monitor_rect=monitor.work
+            width=width, height=height, monitor_rect=work
         )
+
+    def center(self):
+        work = self.monitor().work
+        rect = self.rect()
+
+        inner_centered = rect.center_inside(work)
+        print(inner_centered)
+        win32gui.SetWindowPos(
+            self.hwnd,
+            None,
+            inner_centered.left,
+            inner_centered.top,
+            0,
+            0,
+            win32con.SWP_NOZORDER  # dont change zorder
+            | win32con.SWP_NOSIZE  # dont resize
+            | win32con.SWP_NOACTIVATE,  # dont reactivate
+        )
+
+    def rect(self) -> Rect:
+        return Rect.from_win32_rect(win32gui.GetWindowRect(self.hwnd))
+
+    def monitor(self) -> Monitor:
+        return Monitor.from_hwnd(self.hwnd)
 
     def _resize_move_to_center_of_rect(
         self, width: int, height: int, monitor_rect: Rect
@@ -84,36 +134,42 @@ class Window:
         leaving even gaps from the top and left.
         """
 
+        inner = Rect.from_width_height(width=width, height=height)
+        inner_centered = inner.center_inside(monitor_rect)
+
         self.restore()
 
-        left_gap = (monitor_rect.width() - width) / 2
-        top_gap = (monitor_rect.height() - height) / 2
-
-        left = int(monitor_rect.left + left_gap)
-        top = int(monitor_rect.top + top_gap)
-
-        win32gui.MoveWindow(self.hwnd, left, top, width, height, True)
+        win32gui.MoveWindow(
+            self.hwnd,
+            inner_centered.left,
+            inner_centered.top,
+            inner_centered.width(),
+            inner_centered.height(),
+            True,
+        )
 
     def resize(self, width_delta=10):
-        monitor = Monitor.from_hwnd(self.hwnd)
+        work = self.monitor().work
         rect = Rect.from_win32_rect(win32gui.GetWindowRect(self.hwnd))
 
         height_delta = int(width_delta / rect.wh_ratio())
         self._resize_move_to_center_of_rect(
             width=rect.width() + width_delta,
             height=rect.height() + height_delta,
-            monitor_rect=monitor.work,
+            monitor_rect=work,
         )
-
-        print(rect.wh_ratio(), width_delta, height_delta)
 
     def bring_to_front(self):
         self.restore()
         win32gui.BringWindowToTop(self.hwnd)
+        self.activate()
+
+    def activate(self):
+        win32gui.SetForegroundWindow(self.hwnd)
 
     def restore(self):
-        # not minimized
-        if not win32gui.IsIconic(self.hwnd):
-            return
-
-        win32gui.ShowWindow(self.hwnd, win32con.SW_RESTORE)
+        if win32gui.IsIconic(self.hwnd):
+            # restore if minimized
+            win32gui.ShowWindow(self.hwnd, win32con.SW_RESTORE)
+        else:
+            win32gui.ShowWindow(self.hwnd, win32con.SW_SHOW)

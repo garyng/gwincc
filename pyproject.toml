@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "imgui-bundle>=1.92.4",
+    "keyboard>=0.13.5",
     "pywinauto>=0.6.9",
     "rapidfuzz>=3.14.3",
 ]
