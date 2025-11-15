@@ -48,7 +48,30 @@ def startup():
     get_windows_background_service.close()
 
 
+T = TypeVar("T")
+
+
+class OneShotValue(Generic[T]):
+    """
+    Wraps a value that returns and resets to default afterwards.
+    """
+
+    def __init__(self, default: T) -> None:
+        self._default = default
+        self._value = self._default
+
+    def set(self, value: T) -> None:
+        self._value = value
+
+    def read(self) -> T:
+        value = self._value
+        self._value = self._default
+        return value
+
+
 class MainView:
+    focus_search_box: OneShotValue[bool] = OneShotValue(False)
+
     def __init__(self, get_windows_background_service) -> None:
         self.store = WindowStateStore()
         self.search_str = ""
@@ -135,13 +158,12 @@ class MainView:
             imgui.table_setup_column("Process")
             imgui.table_headers_row()
 
-            # if imgui.is_window_focused():
-            #     io = imgui.get_io()
-            #     for char in io.input_queue_characters:
-            #         print(chr(char))
-            #     # for k in range(imgui.Key.named_key_begin, imgui.Key.named_key_end):
-            #     #     if imgui.is_key_pressed(k):
-            #     #         print(k)
+            if imgui.is_window_focused():
+                # prepend the character typed into this table
+                for char in imgui.get_io().input_queue_characters:
+                    self.search_str += chr(char)
+                # then focus to the search box
+                self.focus_search_box.set(True)
 
             windows = self._sort(
                 self._filter(self.get_windows_background_service.windows)
@@ -196,11 +218,25 @@ class MainView:
         imgui.text("search")
         imgui.same_line()
 
-        # for k in range(imgui.Key.named_key_begin, imgui.Key.named_key_end):
-        #     if imgui.is_key_pressed(k) and not imgui.get_io().want_capture_keyboard:
-        #         imgui.set_keyboard_focus_here(0)
-        # todo: how to make this receive input by default?
-        _, self.search_str = imgui.input_text("##search", self.search_str)
+        if imgui.is_window_focused(imgui.FocusedFlags_.root_window):
+            self.focus_search_box.set(True)
+
+        should_focus = self.focus_search_box.read()
+
+        def unselect_all(data: imgui.InputTextCallbackData) -> int:
+            """
+            Weirdly imgui will select all text when programmatically focused.
+            This clear the selection when a focus is requested.
+            """
+            if should_focus:
+                data.clear_selection()
+            return 0
+
+        if should_focus:
+            imgui.set_keyboard_focus_here(0)
+        _, self.search_str = imgui.input_text(
+            "##search", self.search_str, callback=unselect_all
+        )
 
     def _render_controls_group(self):
         selected = self.store.selected()
