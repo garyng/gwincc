@@ -58,7 +58,7 @@ def bring_self_to_front(get_windows_background_service: GetWindowsBackgroundServ
 
 
 class Startup:
-    def _load_fonts(self, font_size=13.0):
+    def _load_fonts(self, font_size=12.0):
         default_font = hello_imgui.load_font(
             "fonts/CascadiaCode-Regular.otf", font_size, hello_imgui.FontLoadingParams()
         )
@@ -73,6 +73,7 @@ class Startup:
         io = imgui.get_io()
         # io.config_flags |= imgui.ConfigFlags_.docking_enable
         io.config_viewports_no_auto_merge = True
+        # io.config_flags |= imgui.ConfigFlags_.nav_enable_keyboard
 
     def run(self):
         root_dir = Path(__file__).parent
@@ -261,47 +262,57 @@ class WindowVisibilityHandler:
         return self._request_resize.read()
 
 
+class SearchBoxFocusHandler:
+
+    def __init__(self) -> None:
+        self.window_has_focus: StateChangeTracker[bool] = StateChangeTracker(False)
+
+    def should_focus(self):
+        return self.window_has_focus.changed and self.window_has_focus.value
+
+class DefaultSearchBoxView:
+    """
+    A search box that has the input focus by default.
+    """
+
+    def __init__(self) -> None:
+        self.window_has_focus: StateChangeTracker[bool] = StateChangeTracker(False)
+        self.search_str = ""
+
+    def render(self):
+        imgui.text("search")
+        imgui.same_line()
+
+        # ref: https://github.com/ocornut/imgui/issues/5882
+        self.window_has_focus.value = (
+            imgui.get_window_viewport().flags & imgui.ViewportFlags_.is_focused > 0
+        )
+
+        if self.window_has_focus.changed and self.window_has_focus.value:
+            imgui.set_keyboard_focus_here(0)
+
+        _, self.search_str = imgui.input_text(
+            "##search",
+            self.search_str,
+            imgui.InputTextFlags_.escape_clears_all
+        )
+        if imgui.is_key_pressed(imgui.Key.down_arrow):
+            logger.info("down")
+
 class MainView:
     focus_search_box: OneShotValue[bool] = OneShotValue(False)
 
     def __init__(self, get_windows_background_service) -> None:
         self._window_state_store = WindowStateStore()
-        self._search_str = ""
         self._get_windows_background_service = get_windows_background_service
-        self._window_created = StateChangeTracker(False)
 
         self._visibility = WindowVisibilityHandler(initial_visibility=True)
+        self._search_box = DefaultSearchBoxView()
 
     def show(self):
         self._visibility.request_show()
 
-    def hide(self):
-        self._visibility.visible = False
-
-    a = False
-
     def render(self) -> None:
-        # monitor_rect = Monitor.from_mouse_pos().work
-        # rect = Rect.from_width_height(monitor_rect.width() / 4, monitor_rect.height() / 4)
-        # rect = rect.center_inside(monitor_rect)
-
-        # should_resize = (
-        #     self._show.initial # when initial value is to show
-        #     or (
-        #         self._show.changed # value changed
-        #         and self._show.value # should show
-        #     )
-        # )
-
-        # # print("should_resize", should_resize)
-
-        # if should_resize:
-        #     print("should resize 2")
-        #     # glfw.show_window(glfw_utils.glfw_window_hello_imgui())
-        #     imgui.set_next_window_size(ImVec2(rect.width(), rect.height()))
-        #     imgui.set_next_window_pos(ImVec2(rect.left, rect.top))
-        #     # imgui.set_next_window_focus()
-        #     # bring_self_to_front(self._get_windows_background_service)
 
         if not self._visibility.visible:
             return
@@ -309,7 +320,7 @@ class MainView:
         if self._visibility.should_resize():
             monitor_rect = Monitor.from_mouse_pos().work
             rect = Rect.from_width_height(
-                monitor_rect.width() / 4, monitor_rect.height() / 4
+                monitor_rect.width() / 2, monitor_rect.height() / 2
             )
             rect = rect.center_inside(monitor_rect)
             imgui.set_next_window_size(ImVec2(rect.width(), rect.height()))
@@ -358,15 +369,17 @@ class MainView:
             # if self.window_has_focus.changed:
             #     self._show.value = self.window_has_focus.value
 
-        # self._render_search()
+            # self._render_search()
 
-        # self._render_windows()
+            self._search_box.render()
+
+            self._render_windows()
 
         # imgui.separator_text("controls")
 
         # self._render_controls_group()
 
-    def _scorer(self, query: str, window: Window, *, processor=None, score_cutoffNone):
+    def _scorer(self, query: str, window: Window, *, processor=None, score_cutoff=None):
         title = rapidfuzz.fuzz.WRatio(
             query, window.title, processor=lambda x: x.lower()
         )
@@ -380,13 +393,13 @@ class MainView:
         # always filter out self
         windows = [window for window in windows if window.pid != os.getpid()]
 
-        if not self._search_str:
+        if not self._search_box.search_str:
             return windows
 
         results = [
             window
             for window, score, index in rapidfuzz.process.extract(
-                self._search_str,
+                self._search_box.search_str,
                 windows,
                 scorer=self._scorer,
                 limit=None,
@@ -428,7 +441,7 @@ class MainView:
             imgui.TableFlags_.resizable
             + imgui.TableFlags_.scroll_x
             + imgui.TableFlags_.scroll_y,
-            ImVec2(0, -5 * imgui.get_frame_height_with_spacing()),
+            # ImVec2(0, -5 * imgui.get_frame_height_with_spacing()),
         ):
             imgui.table_setup_scroll_freeze(0, 1)
             imgui.table_setup_column("##actions")
@@ -453,7 +466,8 @@ class MainView:
 
             msio = imgui.begin_multi_select(
                 imgui.MultiSelectFlags_.clear_on_escape
-                + imgui.MultiSelectFlags_.box_select2d,
+                # + imgui.MultiSelectFlags_.box_select2d,
+                + imgui.MultiSelectFlags_.single_select,
                 items_count=len(windows),  # used in set_all request
             )
             self._apply_selection_requests(msio=msio, on_selection=on_selection)
@@ -476,16 +490,56 @@ class MainView:
                     imgui.table_next_column()
 
                     imgui.set_next_item_selection_user_data(idx)
+                    
                     clicked, selected = imgui.selectable(
                         label=window.title,
                         p_selected=state.selected,
                         flags=imgui.SelectableFlags_.span_all_columns
                         + imgui.SelectableFlags_.allow_double_click,
                     )
-                    if clicked and imgui.is_mouse_double_clicked(
-                        imgui.MouseButton_.left
-                    ):
-                        window.bring_to_front()
+                    state.selected = selected
+                    if clicked:
+                        if imgui.is_mouse_double_clicked(
+                            imgui.MouseButton_.left
+                        ):
+                            window.bring_to_front()
+                        else:
+                            imgui.open_popup("actions")
+
+                    with imgui_ctx.begin_popup("actions") as actions_popup:
+                        if actions_popup:
+                            style = imgui.get_style()
+
+                            with (
+                                imgui_ctx.begin_group(),
+                                imgui_ctx.begin_horizontal("actions"),
+                                imgui_ctx.push_style_var(
+                                    imgui.StyleVar_.item_spacing,
+                                    ImVec2(style.item_spacing.y * 0.9, style.item_spacing.y),
+                                ),
+                                imgui_ctx.push_style_var(
+                                    imgui.StyleVar_.frame_padding,
+                                    ImVec2(style.frame_padding.y * 10, style.frame_padding.y * 2),
+                                ),
+                            ):
+                                if imgui.button("\uf140"):
+                                    window.bring_to_front()
+                                set_item_tooltip_no_delay("bring to front")
+
+                                if imgui.button("\ue4bd"):
+                                    window.resize_and_center()
+                                set_item_tooltip_no_delay("center")
+
+                                if imgui.button("\uf0fe"):
+                                    window.resize(width_delta=10)
+                                set_item_tooltip_no_delay("bigger")
+
+                                if imgui.button("\uf146"):
+                                    window.resize(width_delta=-10)
+                                set_item_tooltip_no_delay("smaller")
+
+                                imgui.button("\uf0d8")
+                                set_item_tooltip_no_delay("always on top")
 
                     imgui.table_next_column()
                     imgui.text(window.proc.name())
