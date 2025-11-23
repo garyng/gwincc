@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "imgui-bundle>=1.92.4",
     "keyboard>=0.13.5",
-    "pywinauto>=0.6.9",
+    "pywin32>=311",
     "rapidfuzz>=3.14.3",
 ]
 
@@ -22,7 +22,3 @@ build-backend = "uv_build"
 dev = [
     "jupyter>=1.1.1",
 ]
-
-[tool.uv.sources]
-# get the latest version as of now
-pywinauto = { git = "https://github.com/pywinauto/pywinauto", rev = "c23e64d5ea2c7d251f263973d320294f2fba5ef0" }
