@@ -1,10 +1,16 @@
 from dataclasses import dataclass
+import logging
+from time import sleep
 from typing import Any
 
 import psutil
 import win32api
 import win32con
 import win32gui
+import win32process
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -23,23 +29,23 @@ class Rect:
     def wh_ratio(self) -> float:
         return self.width() / self.height()
 
-    @classmethod
-    def from_win32_rect(cls, rect: Any) -> "Rect":
+    @staticmethod
+    def from_win32_rect(rect: Any) -> "Rect":
         """
         Accepts either a 4-tuple (left, top, right, bottom) or an object
         with attributes left, top, right, bottom (e.g., a win32 RECT).
         """
         if hasattr(rect, "left") and hasattr(rect, "top"):
-            return cls(rect.left, rect.top, rect.right, rect.bottom)
+            return Rect(rect.left, rect.top, rect.right, rect.bottom)
         l, t, r, b = rect
-        return cls(l, t, r, b)
+        return Rect(l, t, r, b)
 
-    @classmethod
-    def from_width_height(cls, width: int, height: int, top=0, left=0) -> "Rect":
+    @staticmethod
+    def from_width_height(width: int, height: int, top=0, left=0) -> "Rect":
         right = left + width
         bottom = top + height
 
-        return cls(left, top, right, bottom)
+        return Rect(left, top, right, bottom)
 
     def center_inside(self, outside_rect: "Rect") -> "Rect":
         """
@@ -65,14 +71,26 @@ class Rect:
 class Monitor:
     work: Rect
 
-    @classmethod
-    def from_hwnd(cls, hwnd: int) -> "Monitor":
-        monitor_handle = win32api.MonitorFromWindow(hwnd)
-        monitor = win32api.GetMonitorInfo(monitor_handle)
+    @staticmethod
+    def from_monitor_handle(hmonitor: int) -> "Monitor":
+        monitor = win32api.GetMonitorInfo(hmonitor)
 
-        return cls(
+        return Monitor(
             work=Rect.from_win32_rect(monitor["Work"]),
         )
+
+    @staticmethod
+    def from_hwnd(hwnd: int) -> "Monitor":
+        monitor_handle = win32api.MonitorFromWindow(hwnd)
+        return Monitor.from_monitor_handle(monitor_handle)
+
+    @staticmethod
+    def from_mouse_pos() -> "Monitor":
+        x, y = win32api.GetCursorPos()
+        monitor_handle = win32api.MonitorFromPoint(
+            (x, y), win32con.MONITOR_DEFAULTTONEAREST
+        )
+        return Monitor.from_monitor_handle(monitor_handle)
 
 
 @dataclass
@@ -82,6 +100,20 @@ class Window:
     hwnd: int
     title: str
     process_created_at: float
+
+    @staticmethod
+    def from_hwnd(hwnd: int) -> "Window":
+        title = win32gui.GetWindowText(hwnd)
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        proc = psutil.Process(pid=pid)
+
+        return Window(
+            pid=pid,
+            proc=proc,
+            hwnd=hwnd,
+            title=title,
+            process_created_at=proc.create_time(),
+        )
 
     def __hash__(self) -> int:
         return hash((self.hwnd,))
@@ -107,7 +139,6 @@ class Window:
         rect = self.rect()
 
         inner_centered = rect.center_inside(work)
-        print(inner_centered)
         win32gui.SetWindowPos(
             self.hwnd,
             None,
@@ -159,10 +190,21 @@ class Window:
             monitor_rect=work,
         )
 
-    def bring_to_front(self):
-        self.restore()
-        win32gui.BringWindowToTop(self.hwnd)
-        self.activate()
+    def bring_to_front(self, retry_when_failed=True):
+        def _():
+            self.restore()
+            win32gui.BringWindowToTop(self.hwnd)
+            self.activate()
+
+        for x in range(0, 30):
+            try:
+                _()
+                break
+            except:
+                logger.info(
+                    "Failed to bring window to front, retrying, [%(x)s]", {"x": x}
+                )
+                sleep(0.01)
 
     def activate(self):
         win32gui.SetForegroundWindow(self.hwnd)
